@@ -32,16 +32,16 @@ public class ExcelUtil {
 	 * 将对象数组转换成excel
 	 * @param pojoList 	对象数组
 	 * @param out		输出流
-	 * @param alias		指定对象属性别名，生成列名和列顺序
+	 * @param alias		指定对象属性别名，生成列名和列顺序Map<"类属性名","列名">
 	 * @param headLine	表标题
 	 * @throws Exception 
 	 */
-	public static void pojo2Excel(List pojoList,OutputStream out,LinkedHashMap<String,String> alias,String headLine) throws Exception {
-		//创建一个工作本
+	public static <T>void pojo2Excel(List<T> pojoList,OutputStream out,LinkedHashMap<String,String> alias,String headLine) throws Exception {
+		//创建一个工作簿
 		HSSFWorkbook wb=new HSSFWorkbook();
 		//创建一个表
 		HSSFSheet sheet=wb.createSheet();
-		//创建第一行
+		//创建第一行，作为表名
 		HSSFRow	  row=sheet.createRow(0);
 		HSSFCell cell=row.createCell(0);
 		cell.setCellValue(headLine);
@@ -59,6 +59,8 @@ public class ExcelUtil {
 			wb.write(out);
 		} catch (IOException e) {
 			e.printStackTrace();
+		}finally {
+			wb.close();
 		}
 	}
 	/**
@@ -68,7 +70,7 @@ public class ExcelUtil {
 	 * @param alias		指定对象属性别名，生成列名和列顺序
 	 * @throws Exception 
 	 */
-	public static void pojo2Excel(List pojoList,OutputStream out,LinkedHashMap<String,String> alias) throws Exception {
+	public static <T>void pojo2Excel(List<T> pojoList,OutputStream out,LinkedHashMap<String,String> alias) throws Exception {
 		//获取类名作为标题
 		String headLine="";
 		if(pojoList.size()>0) {
@@ -85,7 +87,7 @@ public class ExcelUtil {
 	 * @param headLine	表标题
 	 * @throws Exception 
 	 */
-	public static void pojo2Excel(List pojoList,OutputStream out,String headLine) throws Exception{
+	public static <T>void pojo2Excel(List<T> pojoList,OutputStream out,String headLine) throws Exception{
 		//获取类的属性作为列名
 		LinkedHashMap<String,String> alias=new LinkedHashMap<String,String>();
 		if(pojoList.size()>0) {
@@ -106,7 +108,7 @@ public class ExcelUtil {
 	 * @param out		输出流
 	 * @throws Exception 
 	 */
-	public static void pojo2Excel(List pojoList,OutputStream out) throws Exception{
+	public static <T>void pojo2Excel(List<T> pojoList,OutputStream out) throws Exception{
 		//获取类的属性作为列名
 		LinkedHashMap<String,String> alias=new LinkedHashMap<String,String>();
 		//获取类名作为标题
@@ -126,9 +128,66 @@ public class ExcelUtil {
 		}
 	}
 	/**
+	 * 此方法作用是创建表头的列名
+	 * @param alias	要创建的表的列名与实体类的属性名的映射集合
+	 * @param row		指定行创建列名
+	 * @return
+	 */
+	private static void insertColumnName(int rowNum,HSSFSheet sheet,Map<String,String> alias){
+		HSSFRow row =sheet.createRow(rowNum);
+		//列的数量
+		int columnCount=0;
+		
+		Set<Entry<String, String>> entrySet = alias.entrySet();
+		
+		for (Entry<String, String> entry : entrySet) {
+			//创建第一行的第columnCount个格子
+			HSSFCell cell=row.createCell(columnCount++);
+			//将此格子的值设置为alias中的键名
+			cell.setCellValue(isNull(entry.getValue()).toString());
+		}
+	}
+	/**
+	 * 从指定行开始插入数据
+	 * @param beginRowNum	开始行
+	 * @param models		对象数组
+	 * @param sheet			表
+	 * @param alias			列别名
+	 * @throws Exception
+	 */
+	private static <T>void insertColumnDate(int beginRowNum,List<T> models,HSSFSheet sheet,Map<String,String> alias) throws Exception{
+		for (T model : models) {
+			//创建新的一行
+			HSSFRow rowTemp =sheet.createRow(beginRowNum++);
+			logger.info("创建了第:{}行", beginRowNum);
+			
+			//获取列的迭代
+			Set<Entry<String, String>> entrySet = alias.entrySet();
+			
+			//从第0个格子开始创建
+			int columnNum=0;
+			for (Entry<String, String> entry : entrySet) {
+				//获取属性值
+				String property = BeanUtils.getProperty(model, entry.getKey());
+				//创建一个格子
+				HSSFCell cell=rowTemp.createCell(columnNum++);
+				cell.setCellValue(property);
+			}
+		}
+	}
+	//判断是否为空，若为空设为""
+	private static Object isNull(Object object){
+		if(object!=null){
+			return object;
+		}else{
+			return "";
+		}
+	}
+	
+	/**
 	 * 将excel表转换成指定类型的对象数组
 	 * @param claz 	类型
-	 * @param alias	列别名
+	 * @param alias	列别名,格式要求：Map<"列名","类属性名">
 	 * @return
 	 * @throws IOException 
 	 * @throws IllegalArgumentException 
@@ -138,11 +197,30 @@ public class ExcelUtil {
 	 * @throws InstantiationException 
 	 * @throws InvocationTargetException 
 	 */
-	public static<T>List<T> excel2Pojo(InputStream inputStream,Class<T> claz,LinkedHashMap<String,String> alias) throws IOException, IllegalArgumentException, IllegalAccessException, NoSuchFieldException, SecurityException, InstantiationException, InvocationTargetException{
+	public static<T>List<T> excel2Pojo(InputStream inputStream,Class<T> claz,LinkedHashMap<String,String> alias) throws IOException{
 		HSSFWorkbook wb = new HSSFWorkbook(inputStream);
-		HSSFSheet sheet = wb.getSheetAt(0);
-		
-		//获取列信息，Map<类属性名，对应一行的第几列>
+		try {
+			HSSFSheet sheet = wb.getSheetAt(0);
+			
+			//生成属性和列对应关系的map，Map<类属性名，对应一行的第几列>
+			Map<String,Integer> propertyMap=generateColumnPropertyMap(sheet,alias);
+			//根据指定的映射关系进行转换
+			List<T> pojoList = generateList(sheet,propertyMap,claz);
+			return pojoList;
+		}catch (Exception e) {
+			e.printStackTrace();
+			return null;
+		}finally {
+			wb.close();
+		}
+	}
+	/**
+	 * 生成一个属性-列的对应关系的map
+	 * @param sheet	表
+	 * @param alias	别名
+	 * @return
+	 */
+	private static Map<String,Integer> generateColumnPropertyMap(HSSFSheet sheet,LinkedHashMap<String,String> alias) {
 		Map<String,Integer> propertyMap=new HashMap<>();
 		
 		HSSFRow propertyRow = sheet.getRow(1);
@@ -160,22 +238,38 @@ public class ExcelUtil {
 			String propertyName = alias.get(cellValue);
 			propertyMap.put(propertyName, i);
 		}
+		return propertyMap;
+	}
+	/**
+	 * 根据指定关系将表数据转换成对象数组
+	 * @param sheet  		表
+	 * @param propertyMap	属性映射关系Map<"属性名",一行第几列>
+	 * @param claz			类类型
+	 * @return
+	 * @throws InstantiationException
+	 * @throws IllegalAccessException
+	 * @throws InvocationTargetException
+	 */
+	private static <T>List<T> generateList(HSSFSheet sheet,Map<String,Integer> propertyMap,Class<T> claz) throws InstantiationException, IllegalAccessException, InvocationTargetException{
 		//对象数组
 		List<T> pojoList=new ArrayList<>();
 		for (Row row : sheet) {
-			//跳过第一行标题
-			if(row.getRowNum()<3) {
+			//跳过前两行标题和列名
+			if(row.getRowNum()<2) {
 				continue;
 			}
 			T instance = claz.newInstance();
 			Set<Entry<String, Integer>> entrySet = propertyMap.entrySet();
 			for (Entry<String, Integer> entry : entrySet) {
-				BeanUtils.setProperty(instance, entry.getKey(), row.getCell(entry.getValue()).getStringCellValue().toString());
+				//获取此行指定列的值,即为属性对应的值
+				String property=row.getCell(entry.getValue()).getStringCellValue().toString();
+				BeanUtils.setProperty(instance, entry.getKey(), property);
 			}
 			pojoList.add(instance);
 		}
 		return pojoList;
 	}
+	
 	/**
 	 * 将excel表转换成指定类型的对象数组，列名即作为对象属性
 	 * @param claz 	类型
@@ -196,95 +290,5 @@ public class ExcelUtil {
 		}
 		List<T> pojoList = excel2Pojo(inputStream, claz, alias);
 		return pojoList;
-	}
-	
-	/**
-	 * 此方法作用是创建表头的列名
-	 * @param mapping	要创建的表的列名与实体类的属性名的映射集合
-	 * @param row		指定行创建列名
-	 * @return
-	 */
-	private static void insertColumnName(int rowNum,HSSFSheet sheet,Map<String,String> mapping){
-		HSSFRow row =sheet.createRow(rowNum);
-		//列的数量
-		int columnCount=0;
-		Iterator columnIter=mapping.entrySet().iterator();
-		//在第一行创建列名
-		while(columnIter.hasNext()){
-			//获取一个mapping中第一个键值对entry
-			Map.Entry entry=(Entry) columnIter.next();
-			
-			//将entry中的值由属性名换成“get+属性”的方法名，供之后获取method
-			attrToSetMethod(entry);
-			
-			//创建第一行的第columnCount个格子
-			HSSFCell cell1_0=row.createCell(columnCount++);
-			
-			//将此格子的值设置为mapping中的键名
-			cell1_0.setCellValue(isNull(entry.getKey()).toString());
-		}
-	}
-	
-	private static <T>void insertColumnDate(int rowNum,List<T> models,HSSFSheet sheet,Map<String,String> mapping) throws Exception{
-		for (T model : models) {
-			//创建新的一行
-			HSSFRow rowTemp =sheet.createRow(rowNum++);
-			logger.info("创建了第:{}行", rowNum);
-			//获取列的迭代
-			Iterator methodNameIter=mapping.entrySet().iterator();
-			//从第0个格子开始创建
-			int columnNum=0;
-			
-			while(methodNameIter.hasNext()){
-				Map.Entry<String, String> methodNameEntry=(Entry<String, String>) methodNameIter.next();
-				String methodName=methodNameEntry.getValue();
-				//获取此列对应实体类的get方法
-				Method method=model.getClass().getMethod(methodName);
-				//调用此方法获取实体类的属性值
-				Object obj=method.invoke(model);
-		
-				//创建一个格子
-				HSSFCell cellTemp=rowTemp.createCell(columnNum++);
-				logger.info("创建了第：{}个格子，存入：{}",columnNum,isNull(obj).toString());
-				//将此属性值放入格子
-				cellTemp.setCellValue(isNull(obj).toString());
-			}
-		}
-	}
-	
-	
-	
-	//将列名对应的属性名换成get方法名
-	private static void attrToSetMethod(Entry entry){
-		//获取entry的值
-		
-		String attrName=(String) isNull(entry.getValue());
-		//连接字符串
-		String getAttrMethodName="get"+captureName(attrName);
-		//将方法名放入entry的值中
-		entry.setValue(getAttrMethodName);
-	}
-	
-	//首字母大写
-	private static String captureName(String name) {
-			if(name==""||name==null){
-				return "";
-			}
-		        char[] cs=name.toCharArray();
-		        if(cs[0]<97||cs[0]>122){
-		        	//首字母不在小写范围,直接返回原值
-		        	return String.valueOf(cs);
-		        }
-		        //首字母-32,变成大写
-		        cs[0]-=32;
-		        return String.valueOf(cs);
-	 }
-	//判断是否为空，若为空设为""
-	private static Object isNull(Object object){
-		if(object!=null){
-			return object;
-		}else{
-			return "";
-		}
 	}
 }
