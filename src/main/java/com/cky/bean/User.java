@@ -1,4 +1,4 @@
-package com.cky.util;
+package com.cky.bean;
 
 public class User {
 	private String name;

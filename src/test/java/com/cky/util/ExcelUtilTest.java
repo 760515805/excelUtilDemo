@@ -11,8 +11,8 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.cky.bean.User;
 import com.cky.util.ExcelUtil;
-import com.cky.util.User;
 
 public class ExcelUtilTest{
 	private static final Logger logger=LoggerFactory.getLogger(ExcelUtilTest.class);
